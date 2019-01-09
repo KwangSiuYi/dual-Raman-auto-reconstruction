@@ -1,0 +1,133 @@
+Function dualraman(yw,x) : FitFunc
+WAVE yw
+Variable x
+// pw[0] = Gaussian amplitude of new
+// pw[1] = Relative amplitude
+// pw[2] = delta change in peak position
+// pw[3] = Gaussian position of new
+// pw[4] = Gaussian width of both peaks
+// pw[5] = baseline
+return  yw[0]*(-yw[1]*exp((-(x-yw[2]-yw[3])^2)/(yw[4]^2/(4*Ln(2))))+ exp((-(x-yw[3])^2)/(yw[4]^2/(4*Ln(2)))))+yw[5]
+End
+
+Macro Slidingfit(name, range, delta)
+string  pnt, name, res
+//string time
+variable pnt1, pnt2, g0,g1,g2,g3,g4,g5
+variable i=0
+variable V_FitError = 0
+variable V_FitQuitReason = 0
+variable V_Chisq
+variable range, delta
+//variable reps=numpnts($times)
+variable reps 
+silent 1
+//waves to contain coefficients
+reps =  numpnts($name) - range
+Make/O/N=(reps) fitrelA
+Make/O/N=(reps) fitAmp
+Make/O/N=(reps) fitFreq
+Make/O/N=(reps) fitWidth1
+Make/O/N=(reps) fitx0
+Make/O/N=(reps) fitChi2
+Make/O/N=(reps) fitnew_Shiftx
+//waves to contain SD coefficients
+Make/O/N=(reps) fitrelAerr
+Make/O/N=(reps) fitAmperr
+Make/O/N=(reps) fitFreqerr
+Make/O/N=(reps) fitWidth1err
+Make/O/N=(reps) fitx0err
+do
+// point=$times(i)
+ //if (point>=0)
+ // pnt =(name + "p" + num2istr(point) )
+  //else
+  //pnt =(name+"m" + num2istr(-1*point) )
+ //endif
+pnt = (name)
+res = ("res_"+name)
+pnt1 = i
+pnt2 = i + range
+fitnew_Shiftx[i] = shiftx_n_mat[i+range/2]
+//initial guesses
+g0 = 2				// pw[0] = amplitude new
+g1 = 1/1.16			// pw[1] = Rel. amplitude based on Raman pump powers
+g2 = delta			// pw[2] = delta based on difference in Raman frequency
+g3 =shiftx_n_mat[i+range/2]	// pw[3] = frequency of mode
+g4 = 25				// pw[4] = FWHM 
+g5 = 0				// pw[5] = baseline
+Make/D/N=6/O W_coef
+Make/D/N=6/O W_sigma
+W_coef[0] = {g0,g1,g2,g3,g4,g5}
+Make/O/T/N=2 T_Constraints
+T_Constraints[0] = {"K0 > 0","50 > K4 > 0"} //Constraints: Amplitude of gaussian peak must be positive.  FWHM must be positive and less than 50 cm-1
+FuncFit /NTHR=0  /H="011101" dualraman W_coef $pnt[pnt1, pnt2] /X=shiftx_n_mat /D /R /A=0 /C=T_Constraints
+// save the coefficients (copied online so that it will proceed even if curve doesn't work)
+Duplicate/O W_coef $("cf_"+name)
+// save errors
+Duplicate/O W_sigma, $("sig_"+name)
+if (V_FitError != 0)
+// Mark the results as being bad
+V_FitError = 0
+W_sigma = 0
+W_coef = 0
+endif
+//putting the values into the waves we defined
+fitAmp[i] = W_coef[0]
+fitrelA[i] = W_coef[1]
+fitFreq[i] = W_coef[3]
+fitWidth1[i] = W_coef[4]
+fitx0[i] = W_coef[5]
+fitChi2[i] = V_chisq
+fitAmperr[i] = W_sigma[0]
+fitFreqerr[i] = W_sigma[3]
+fitWidth1err[i] = W_sigma[4]
+fitx0err[i] = W_sigma[5]
+ i+=1
+while(i<reps)
+edit fitAmp, fitAmperr, fitrelA, fitrelAerr, fitFreq, fitFreqerr, fitWidth1, fitWidth1err, fitx0, fitx0err, fitChi2, fitnew_Shiftx
+Make/o/n=(reps) frac = fitAmp/fitAmperr
+display chx_n_znorm vs shiftx_n_mat
+append/r frac vs fitnew_shiftx
+End Macro
+
+Macro autorecond(name, threshold)
+String name, pnt,pnt0, pnt1, pnt2, pnt3, recons, temps
+variable i = 0
+variable reps
+variable threshold
+variable num
+Silent 1
+//name is frac in this case
+pnt = (name+"_DIF")
+pnt0 = (name)
+pnt1 = ("fitnew_Shiftx")
+pnt2 = ("fitAmp")
+pnt3 = ("fitWidth1")
+recons = ("recon_chx_d")
+temps = ("temp")
+reps = numpnts($pnt0)
+Make/o/n=(reps) $pnt
+Make/o/n=(reps) $recons = 0
+Make/o/n=(reps) $temps
+
+Differentiate $pnt0/D=$pnt
+MatrixOP /O frac_DIF = replace(frac_DIF,NAN,0)
+Do
+If ($pnt[i] > 0 )
+	If ( $pnt[i+1] < 0)
+	//sum 10 points in a row must be bigger than 1
+		num = sum($pnt, i-12, i-2)
+		If (num > threshold)
+ 	$temps = $pnt2[i]*exp(-(($pnt1 - $pnt1[i])^2)/($pnt3[i]^2/(4*Ln(2))))
+	 	$recons = recon_chx_d + temp
+	 	else
+	 	endif
+	 else
+	endif
+else
+endif
+i+=1
+while (i<reps)
+display $recons vs $pnt1
+End Macro
